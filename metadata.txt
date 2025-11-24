@@ -1,0 +1,6 @@
+[general]
+name=UpdatefromURL 
+description= Update your .qgz project from URL
+author=woups
+icon=icon.svg
+version=0.1
