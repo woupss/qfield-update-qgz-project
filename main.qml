@@ -9,29 +9,190 @@ import QtCore
 Item {
     id: updatePlugin
     property var mainWindow: iface.mainWindow()
-
-    // =========================================================================
-    // 1. CONFIGURATION
-    // =========================================================================
-    
     property string fullDestinationPath: ""
     property bool isSuccess: false
+    property bool isNameMismatch: false
 
     // =========================================================================
-    // 2. LOGIQUE
+    // 0. GESTION DES TRADUCTIONS
     // =========================================================================
 
-    // Fonction pour nettoyer et valider le nom du fichier
+    property var translations: {
+        "fr": {
+            "TITLE": "MISE À JOUR",
+            "LBL_SOURCE": "URL source :",
+            "PH_URL": "https://github.com/User/Repo...",
+            "LBL_TARGET": "Nom du fichier cible :",
+            "WARN_REPLACE": "Le projet actuel sera remplacé.",
+            "WARN_MISMATCH": "Le fichier de l'URL est différent du projet ouvert.",
+            "CB_ALLOW_DIFF": "Je confirme vouloir enregistrer sous un autre nom",
+            "LBL_PATH": "Dossier de destination :",
+            "BTN_CLOSE": "Fermer",
+            "BTN_UPDATE_SAME": "Mettre à jour le projet",
+            "BTN_UPDATE_DIFF": "Télécharger une version différente",
+            "STATUS_READY": "Prêt.",
+            "STATUS_DOWNLOADING": "Téléchargement en cours...",
+            "STATUS_WRITING": "Écriture sur le disque...",
+            "STATUS_SUCCESS": "SUCCÈS",
+            "STATUS_ERR_WRITE": "Erreur d'écriture.",
+            "TOAST_URL_EMPTY": "L'URL est vide !",
+            "TOAST_FILENAME_INVALID": "Nom de fichier invalide !",
+            "TOAST_WRITE_FAILED": "Échec de l'écriture",
+            "INFO_ACTION": "⚠️ ACTION REQUISE :\nPour appliquer les changements, veuillez retourner au menu principal et recharger le projet.",
+            "ERR_FILENAME_DETECT": "Erreur : Nom de fichier indéterminé.",
+            "ERR_NOT_FOUND": " (Introuvable - Vérifiez le nom de la branche: main vs master ?)"
+        },
+        "en": {
+            "TITLE": "UPDATE",
+            "LBL_SOURCE": "Source URL:",
+            "PH_URL": "https://github.com/User/Repo...",
+            "LBL_TARGET": "Target filename:",
+            "WARN_REPLACE": "The current project will be replaced.",
+            "WARN_MISMATCH": "URL filename differs from open project.",
+            "CB_ALLOW_DIFF": "I confirm saving with a different name",
+            "LBL_PATH": "Destination folder:",
+            "BTN_CLOSE": "Close",
+            "BTN_UPDATE_SAME": "Update Project",
+            "BTN_UPDATE_DIFF": "Download different version",
+            "STATUS_READY": "Ready.",
+            "STATUS_DOWNLOADING": "Downloading...",
+            "STATUS_WRITING": "Writing to disk...",
+            "STATUS_SUCCESS": "SUCCESS",
+            "STATUS_ERR_WRITE": "Write error.",
+            "TOAST_URL_EMPTY": "URL is empty!",
+            "TOAST_FILENAME_INVALID": "Filename is invalid!",
+            "TOAST_WRITE_FAILED": "Write failed",
+            "INFO_ACTION": "⚠️ ACTION REQUIRED:\nTo apply changes, please return to the main menu and reload the project.",
+            "ERR_FILENAME_DETECT": "Error: Could not determine filename.",
+            "ERR_NOT_FOUND": " (Not Found - Check branch name: main vs master?)"
+        }
+    }
+
+    function tr(key) {
+        var dict = translations["en"];
+        var sysLang = Qt.locale().name;
+        if (sysLang.substring(0, 2) === "fr") {
+            dict = translations["fr"];
+        }
+        var val = dict[key];
+        return val !== undefined ? val : key;
+    }
+
+    // =========================================================================
+    // 1. COMPOSANT PERSONNALISÉ : MARQUEE TEXT FIELD
+    // =========================================================================
+    
+    component MarqueeTextField : TextField {
+        id: control
+        property color normalColor: "black"
+        color: activeFocus ? normalColor : "transparent"
+        clip: true 
+        Layout.preferredHeight: Math.max(40, contentHeight + topPadding + bottomPadding + 15)
+        verticalAlignment: TextInput.AlignVCenter
+
+        Item {
+            id: marqueeContainer
+            anchors.fill: parent
+            anchors.leftMargin: control.leftPadding
+            anchors.rightMargin: control.rightPadding
+            anchors.topMargin: control.topPadding
+            anchors.bottomMargin: control.bottomPadding
+            visible: !control.activeFocus 
+            clip: true
+
+            Text {
+                id: scrollingText
+                text: control.text
+                font: control.font
+                color: control.normalColor
+                verticalAlignment: Text.AlignVCenter
+                height: parent.height
+                x: 0
+                property bool needsScroll: width > marqueeContainer.width
+                property int travelDistance: Math.max(0, width - marqueeContainer.width)
+
+                SequentialAnimation on x {
+                    running: scrollingText.needsScroll && marqueeContainer.visible
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: 2000 }
+                    NumberAnimation {
+                        to: -scrollingText.travelDistance
+                        duration: scrollingText.travelDistance > 0 ? scrollingText.travelDistance * 20 : 0
+                        easing.type: Easing.Linear
+                    }
+                    PauseAnimation { duration: 1000 }
+                    NumberAnimation {
+                        to: 0
+                        duration: scrollingText.travelDistance > 0 ? scrollingText.travelDistance * 20 : 0
+                        easing.type: Easing.Linear
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 2. LOGIQUE METIER
+    // =========================================================================
+
+    function getCurrentProjectName() {
+        var fullPath = qgisProject.fileName;
+        if (!fullPath) return "";
+        var parts = fullPath.split('/');
+        return parts[parts.length - 1];
+    }
+
+    function extractNameFromUrl(url) {
+        if (!url || url.trim() === "") return "";
+        try {
+            var cleanUrl = url.split('?')[0];
+            var lower = cleanUrl.toLowerCase();
+            if (lower.indexOf(".qgz") === -1 && lower.indexOf(".qgs") === -1) return "";
+            var parts = cleanUrl.split('/');
+            var name = parts[parts.length - 1];
+            return name;
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function getRawUrl(url) {
+        var processed = url.trim();
+        
+        if (processed.indexOf("http") !== 0) {
+            processed = "https://" + processed;
+        }
+
+        if (processed.indexOf("github.com") === -1) return processed;
+        if (processed.indexOf("raw.githubusercontent.com") !== -1) return processed;
+        if (processed.indexOf("/raw/") !== -1) return processed;
+
+        if (processed.indexOf("/blob/") !== -1) return processed.replace("/blob/", "/raw/");
+        if (processed.indexOf("/tree/") !== -1) return processed.replace("/tree/", "/raw/");
+
+        var regex = /^(https?:\/\/(?:www\.)?github\.com\/[^\/]+\/[^\/]+)(\/.+)$/;
+        var match = processed.match(regex);
+        
+        if (match) {
+            console.log("QField Update: Short GitHub URL detected. Injecting '/raw/main/'");
+            return match[1] + "/raw/main" + match[2];
+        }
+
+        return processed;
+    }
+
     function getCorrectedFileName() {
         var rawName = filenameInput.text.trim();
-        if (rawName === "") return "";
-
-        var lower = rawName.toLowerCase();
-        // Vérifie si ça finit par .qgz ou .qgs
-        if (!lower.endsWith(".qgz") && !lower.endsWith(".qgs")) {
-            return rawName + ".qgz";
+        if (rawName !== "") {
+            var lower = rawName.toLowerCase();
+            if (!lower.endsWith(".qgz") && !lower.endsWith(".qgs")) {
+                return rawName + ".qgz";
+            }
+            return rawName;
         }
-        return rawName;
+        var urlName = extractNameFromUrl(urlInput.text);
+        if (urlName !== "") return urlName;
+        return getCurrentProjectName();
     }
 
     function calculatePath() {
@@ -42,48 +203,66 @@ Item {
             folder = "/storage/emulated/0/Android/data/ch.opengis.qfield/files/imported_projects";
         }
 
-        // On récupère le nom avec l'extension corrigée automatiquement
-        var fileName = getCorrectedFileName();
+        var currentProjName = getCurrentProjectName();
+        var urlName = extractNameFromUrl(urlInput.text);
+
+        if (urlName !== "" && urlName !== filenameInput.text) {
+             filenameInput.text = urlName;
+        } else if (urlName === "" && filenameInput.text === "") {
+             filenameInput.text = currentProjName;
+        }
+
+        var targetName = getCorrectedFileName();
         
-        // Si le champ est vide, on ne met pas de slash pour l'affichage
-        var displayFile = fileName === "" ? "[filename]" : fileName;
-        
+        if (targetName !== currentProjName) {
+            if (!isNameMismatch) {
+                allowDiffCheckbox.checked = false;
+            }
+            isNameMismatch = true;
+        } else {
+            isNameMismatch = false;
+            allowDiffCheckbox.checked = false;
+        }
+
+        var fileName = targetName === "" ? "[filename]" : targetName;
         fullDestinationPath = folder + "/" + fileName;
-        pathDisplay.text = folder + "/\n" + displayFile; 
+        pathDisplay.text = folder + "/"; 
     }
 
     function startDownload() {
-        // On applique la correction du nom dans le champ de texte visible pour l'utilisateur
+        calculatePath(); 
         var finalName = getCorrectedFileName();
-        if (filenameInput.text.trim() !== "" && filenameInput.text !== finalName) {
-            filenameInput.text = finalName;
+        var rawInputUrl = urlInput.text.trim();
+
+        if (rawInputUrl === "") {
+            mainWindow.displayToast(tr("TOAST_URL_EMPTY"))
+            return;
         }
-
-        calculatePath();
-
-        var currentUrl = urlInput.text.trim();
         
-        if (currentUrl === "") {
-            mainWindow.displayToast(qsTr("URL is empty!"))
-            return;
-        }
-        if (finalName === "") {
-            mainWindow.displayToast(qsTr("Filename is empty!"))
+        if (isNameMismatch && !allowDiffCheckbox.checked) {
+            mainWindow.displayToast(tr("WARN_MISMATCH"))
             return;
         }
 
-        //mainWindow.displayToast(qsTr("Connecting to server..."))
+        var urlWithFile = rawInputUrl;
+        if (urlWithFile.toLowerCase().indexOf(".qgz") === -1 && urlWithFile.toLowerCase().indexOf(".qgs") === -1) {
+            if (!urlWithFile.endsWith("/")) urlWithFile += "/";
+            urlWithFile += finalName;
+        }
+
+        var finalUrl = getRawUrl(urlWithFile);
+        console.log("QField Update Plugin: Final Download URL: " + finalUrl);
+
         pBar.visible = true
         pBar.indeterminate = true
-        statusText.text = qsTr("Downloading...")
+        statusText.text = tr("STATUS_DOWNLOADING")
         statusText.color = Theme.mainColor
         downloadBtn.enabled = false
-        
         infoBox.visible = false
         infoText.visible = false
 
         var xhr = new XMLHttpRequest()
-        xhr.open("GET", currentUrl)
+        xhr.open("GET", finalUrl)
         xhr.responseType = "arraybuffer"
 
         xhr.onreadystatechange = function() {
@@ -95,6 +274,7 @@ Item {
                     saveToDisk(xhr.response)
                 } else {
                     var err = "HTTP Error: " + xhr.status
+                    if (xhr.status === 404) err += tr("ERR_NOT_FOUND")
                     statusText.text = err
                     statusText.color = "red"
                     mainWindow.displayToast(err)
@@ -106,36 +286,26 @@ Item {
 
     function saveToDisk(data) {
         try {
-            statusText.text = qsTr("Writing to disk...")
-            
+            statusText.text = tr("STATUS_WRITING")
             var success = FileUtils.writeFileContent(fullDestinationPath, data)
 
             if (success) {
                 isSuccess = true 
-                
-                statusText.text = "SUCCESS"
+                statusText.text = tr("STATUS_SUCCESS")
                 statusText.color = "#80cc28"
-                
-                // Texte avec instruction de reload
-                infoText.text = "⚠️ ACTION REQUIRED:\nTo apply changes, please return to the main menu and reload the project."
-                
+                infoText.text = tr("INFO_ACTION")
                 infoText.visible = true
                 infoBox.visible = true
-
             } else {
-                statusText.text = qsTr("Write error.")
+                statusText.text = tr("STATUS_ERR_WRITE")
                 statusText.color = "red"
-                mainWindow.displayToast(qsTr("Write failed"))
+                mainWindow.displayToast(tr("TOAST_WRITE_FAILED"))
             }
         } catch (e) {
             statusText.text = "Exception: " + e
             statusText.color = "red"
         }
     }
-
-    // =========================================================================
-    // 3. INTERFACE
-    // =========================================================================
 
     Component.onCompleted: {
         iface.addItemToPluginsToolbar(toolbarButton)
@@ -147,27 +317,35 @@ Item {
         iconColor: Theme.mainColor
         bgcolor: Theme.darkGray
         round: true
-
         onClicked: {
-            calculatePath(); 
             isSuccess = false
-            statusText.text = qsTr("Ready to update.")
+            statusText.text = tr("STATUS_READY")
             statusText.color = "black"
             infoBox.visible = false
             infoText.visible = false
             pBar.visible = false
             downloadBtn.enabled = true
+            
+            filenameInput.text = "" 
+            urlInput.text = "" 
+            allowDiffCheckbox.checked = false
+            isNameMismatch = false
+            
             downloadDialog.open()
+            calculatePath(); 
         }
     }
+
+    // =========================================================================
+    // 3. INTERFACE
+    // =========================================================================
 
     Dialog {
         id: downloadDialog
         parent: mainWindow.contentItem
         modal: true
-        width: Math.min(450, mainWindow.width * 0.95)
-        x: (mainWindow.width - width) / 2
-        y: (mainWindow.height - height) / 2
+        width: Math.min(340, mainWindow.width * 0.80)
+        anchors.centerIn: parent
         standardButtons: Dialog.NoButton
         
         background: Rectangle { 
@@ -177,152 +355,226 @@ Item {
             radius: 8 
         }
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            anchors.bottomMargin: 16
-            anchors.topMargin: 2
-            spacing: 10
+        contentItem: Item {
+            implicitHeight: mainCol.implicitHeight
+            implicitWidth: mainCol.implicitWidth
 
-            Label {
-                text: qsTr("UPDATE")
-                font.bold: true
-                font.pointSize: 16
-                Layout.alignment: Qt.AlignHCenter
+            FocusScope {
+                id: dummyFocus
+                anchors.fill: parent
+                z: -1
             }
 
-            // --- URL INPUT ---
-            Text { text: "Source URL:"; color: "#666"; font.pixelSize: 12 }
-            TextField {
-                id: urlInput
-                text: "https://"
-                placeholderText: "https://example.com/file.qgz"
-                selectByMouse: true
-                Layout.fillWidth: true
-            }
-
-            // --- FILENAME INPUT ---
-            Text { text: "Target filename:"; color: "#666"; font.pixelSize: 12 }
-            TextField {
-                id: filenameInput
-                text: "" 
-                placeholderText: "project_name.qgz"
-                selectByMouse: true
-                Layout.fillWidth: true
-                
-                // Recalcule le chemin à chaque frappe
-                onTextChanged: calculatePath()
-                
-                // Correction automatique à la fin de l'édition
-                onEditingFinished: {
-                    var corrected = getCorrectedFileName();
-                    if (text !== "" && text !== corrected) {
-                        text = corrected;
-                    }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    dummyFocus.forceActiveFocus()
+                    Qt.inputMethod.hide()
+                    calculatePath()
                 }
             }
-            
-            // --- MESSAGE ROUGE ---
-            Text { 
-                text: "The current project will be replaced if names match."
-                color: "red"
-                font.italic: true
-                font.pixelSize: 12 
-                Layout.fillWidth: true
-                Layout.topMargin: -5 
-                Layout.bottomMargin: 5
-            }
-            
-            // --- PATH DISPLAY ---
-            Text { text: "Full destination path:"; color: "#666"; font.pixelSize: 12 }
-            Text { 
-                id: pathDisplay
-                text: "..." 
-                font.bold: true
-                font.pixelSize: 12
-                color: "#000000"//Theme.mainColor
-                wrapMode: Text.WrapAnywhere
-                Layout.fillWidth: true 
-            }
 
-            ProgressBar { 
-                id: pBar
-                Layout.fillWidth: true
-                visible: false
-                indeterminate: true 
-            }
-            
-            Text { 
-                id: statusText
-                text: qsTr("Ready.")
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                font.bold: true 
-            }
-            
-            // --- INFO BOX (MODIFIÉ: GRIS) ---
-            Rectangle {
-                id: infoBox
-                visible: false
+            ColumnLayout {
+                id: mainCol
+                anchors.fill: parent
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.bottomMargin: 16
+                anchors.topMargin: 0 // Réduction de la marge supérieure
                 
-                // Fond gris clair
-                color: "#f0f0f0" 
-                radius: 4
-                // Bordure un peu plus foncée
-                border.color: "#dcdcdc"
-                
-                Layout.fillWidth: true
-                Layout.preferredHeight: infoText.contentHeight + 30 
-                Layout.topMargin: 10
+                // ESPACEMENT GLOBAL RÉDUIT (Rapproche les textes des inputs)
+                spacing: 2 
 
+                Label {
+                    text: tr("TITLE")
+                    font.bold: true
+                    font.pointSize: 16
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: 0
+                    Layout.bottomMargin: 5 // Petit espace après le titre
+                }
+
+                // --- URL INPUT ---
                 Text { 
-                    id: infoText
-                    visible: parent.visible
-                    text: ""
-                    // Couleur du texte changée en noir/gris foncé pour être lisible sur le gris
-                    color: "#333333" 
-                    font.pixelSize: 13 
-                    font.bold: true 
-                    wrapMode: Text.WordWrap 
-                    width: parent.width - 20
-                    anchors.centerIn: parent
-                    horizontalAlignment: Text.AlignHCenter 
-                    verticalAlignment: Text.AlignVCenter
+                    text: tr("LBL_SOURCE"); 
+                    color: "#666"; 
+                    font.pixelSize: 12 
+                    // Pas de marge en haut, c'est le premier élément
                 }
-            }
-
-            // --- BOUTON D'ACTION ---
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 15
-                spacing: 20
-                Layout.alignment: Qt.AlignHCenter
                 
-                Button {
-                    id: downloadBtn
-                    text: isSuccess ? "Close" : "Update"
-                    Layout.preferredWidth: 220
+                MarqueeTextField {
+                    id: urlInput
+                    text: "" 
+                    placeholderText: tr("PH_URL")
+                    selectByMouse: true
+                    Layout.fillWidth: true
+                    onTextChanged: calculatePath()
+                }
+
+                // --- FILENAME INPUT ---
+                Text { 
+                    text: tr("LBL_TARGET"); 
+                    color: "#666"; 
+                    font.pixelSize: 12 
+                    // Ajout d'une marge pour séparer du champ précédent
+                    Layout.topMargin: 10 
+                }
+                
+                MarqueeTextField {
+                    id: filenameInput
+                    text: "" 
+                    placeholderText: getCurrentProjectName()
+                    selectByMouse: true
+                    Layout.fillWidth: true
+                    onTextChanged: calculatePath()
+                }
+                
+                // --- ALERTE & CHECKBOX ---
+                ColumnLayout {
+                    visible: isNameMismatch
+                    Layout.fillWidth: true
+                    spacing: 5
+                    // Marge pour séparer du champ nom
+                    Layout.topMargin: 8
                     
-                    background: Rectangle { 
-                        color: enabled ? (isSuccess ? "#28a745" : Theme.mainColor) : "#ccc"
-                        radius: 4 
-                    }
-                    
-                    contentItem: Text { 
-                        text: parent.text
-                        color: "white"
+                    Text {
+                        text: tr("WARN_MISMATCH")
+                        color: "#e67e22" 
                         font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter 
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
+
+                    RowLayout {
+                        spacing: 8
+                        CheckBox {
+                            id: allowDiffCheckbox
+                            checked: false
+                        }
+                        Text {
+                            text: tr("CB_ALLOW_DIFF")
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: allowDiffCheckbox.checked = !allowDiffCheckbox.checked
+                            }
+                        }
+                    }
+                }
+
+                // --- AVERTISSEMENT STANDARD ---
+                Text { 
+                    visible: !isNameMismatch
+                    text: tr("WARN_REPLACE")
+                    color: "red"
+                    font.italic: true
+                    font.pixelSize: 12 
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    // Marge pour séparer du champ nom si pas de mismatch
+                    Layout.topMargin: 5 
+                }
+                
+                // --- PATH DISPLAY ---
+                Text { 
+                    text: tr("LBL_PATH"); 
+                    color: "#666"; 
+                    font.pixelSize: 12 
+                    Layout.topMargin: 10 // Espace avant cette section
+                }
+                Text { 
+                    id: pathDisplay
+                    text: "..." 
+                    font.bold: true
+                    font.pixelSize: 12
+                    color: "#000000"
+                    wrapMode: Text.WrapAnywhere
+                    Layout.fillWidth: true 
+                }
+
+                ProgressBar { 
+                    id: pBar
+                    Layout.fillWidth: true
+                    visible: false
+                    indeterminate: true 
+                    Layout.topMargin: 5
+                }
+                
+                Text { 
+                    id: statusText
+                    text: tr("STATUS_READY")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    font.bold: true 
+                }
+                
+                Rectangle {
+                    id: infoBox
+                    visible: false
+                    color: "#f0f0f0" 
+                    radius: 4
+                    border.color: "#dcdcdc"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: infoText.contentHeight + 30 
+                    Layout.topMargin: 10
+
+                    Text { 
+                        id: infoText
+                        visible: parent.visible
+                        text: ""
+                        color: "#333333" 
+                        font.pixelSize: 13 
+                        font.bold: true 
+                        wrapMode: Text.WordWrap 
+                        width: parent.width - 20
+                        anchors.centerIn: parent
+                        horizontalAlignment: Text.AlignHCenter 
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    // Réduction de la marge au dessus du bouton (5 au lieu de 15)
+                    Layout.topMargin: 5
+                    spacing: 20
+                    Layout.alignment: Qt.AlignHCenter
                     
-                    onClicked: {
-                        if (isSuccess) {
-                            downloadDialog.close()
-                        } else {
-                            startDownload()
+                    Button {
+                        id: downloadBtn
+                        
+                        // TEXTE DYNAMIQUE
+                        text: isSuccess ? tr("BTN_CLOSE") : (isNameMismatch ? tr("BTN_UPDATE_DIFF") : tr("BTN_UPDATE_SAME"))
+                        
+                        // LARGEUR ADAPTÉE AU TEXTE (Min 220px)
+                        Layout.preferredWidth: Math.max(220, contentItem.implicitWidth + 24)
+                        
+                        enabled: isSuccess ? true : (isNameMismatch ? allowDiffCheckbox.checked : true)
+                        
+                        background: Rectangle { 
+                            // COULEUR FIXE (Theme.mainColor), sauf si désactivé
+                            color: parent.enabled ? Theme.mainColor : "#ccc"
+                            radius: 4 
+                        }
+                        
+                        contentItem: Text { 
+                            text: parent.text
+                            color: "white"
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter 
+                        }
+                        
+                        onClicked: {
+                            if (isSuccess) {
+                                downloadDialog.close()
+                            } else {
+                                startDownload()
+                            }
                         }
                     }
                 }
