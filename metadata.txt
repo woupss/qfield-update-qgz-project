@@ -1,7 +1,7 @@
 [general]
 name=UpdatefromURL 
 description= Update your .qgz project from URL
-author=woups
+author=woupss
 icon=icon.svg
 version=0.2
 homepage=https://github.com/woupss/qfield-update-qgz-project
