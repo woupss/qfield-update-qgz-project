@@ -14,20 +14,38 @@ Item {
     property bool isNameMismatch: false
 
     // =========================================================================
-    // 0. GESTION DES TRADUCTIONS
+    // 0. FONCTION DE RECHARGEMENT (NOUVEAU)
+    // =========================================================================
+    
+    function triggerReload() {
+        downloadDialog.close()
+        
+        // Si le fichier écrasé est celui ouvert, on recharge, sinon on ouvre le nouveau
+        if (fullDestinationPath === qgisProject.fileName) {
+            iface.reloadProject()
+        } else {
+            iface.openProject(fullDestinationPath)
+        }
+    }
+
+    // =========================================================================
+    // 1. GESTION DES TRADUCTIONS (Fusionnée)
     // =========================================================================
 
     property var translations: {
         "fr": {
             "TITLE": "MISE À JOUR",
             "LBL_SOURCE": "URL source :",
-            "PH_URL": "https://github.com/User/Repo...",
+            "PH_URL": "https://github.com/User/Repo/blob/main/projet.qgz",
+            "CB_TOKEN": "Utiliser un token privé (GitHub PAT)",
+            "PH_TOKEN": "ghp_xxxxxxxxxxxx...",
             "LBL_TARGET": "Nom du fichier cible :",
             "WARN_REPLACE": "Le projet actuel sera remplacé.",
             "WARN_MISMATCH": "Le fichier de l'URL est différent du projet ouvert.",
             "CB_ALLOW_DIFF": "Je confirme vouloir enregistrer sous un autre nom",
             "LBL_PATH": "Dossier de destination :",
             "BTN_CLOSE": "Fermer",
+            "BTN_RELOAD": "Recharger le projet", 
             "BTN_UPDATE_SAME": "Mettre à jour le projet",
             "BTN_UPDATE_DIFF": "Télécharger une version différente",
             "STATUS_READY": "Prêt.",
@@ -38,20 +56,25 @@ Item {
             "TOAST_URL_EMPTY": "L'URL est vide !",
             "TOAST_FILENAME_INVALID": "Nom de fichier invalide !",
             "TOAST_WRITE_FAILED": "Échec de l'écriture",
-            "INFO_ACTION": "⚠️ ACTION REQUISE :\nPour appliquer les changements, veuillez retourner au menu principal et recharger le projet.",
+            "INFO_ACTION": "⚠️ TÉLÉCHARGEMENT RÉUSSI :\nCliquez sur 'Recharger le projet' pour appliquer les modifications.",
             "ERR_FILENAME_DETECT": "Erreur : Nom de fichier indéterminé.",
-            "ERR_NOT_FOUND": " (Introuvable - Vérifiez le nom de la branche: main vs master ?)"
+            "ERR_NOT_FOUND": " (404 Introuvable)\nVérifiez l'URL, la branche ou les droits du token.",
+            "ERR_AUTH": " (401 Non autorisé)\nVérifiez votre Token.",
+            "ERR_API_CONVERT": "Impossible de convertir l'URL au format API."
         },
         "en": {
             "TITLE": "UPDATE",
             "LBL_SOURCE": "Source URL:",
-            "PH_URL": "https://github.com/User/Repo...",
+            "PH_URL": "https://github.com/User/Repo/blob/main/project.qgz",
+            "CB_TOKEN": "Use private token (GitHub PAT)",
+            "PH_TOKEN": "ghp_xxxxxxxxxxxx...",
             "LBL_TARGET": "Target filename:",
             "WARN_REPLACE": "The current project will be replaced.",
             "WARN_MISMATCH": "URL filename differs from open project.",
             "CB_ALLOW_DIFF": "I confirm saving with a different name",
             "LBL_PATH": "Destination folder:",
             "BTN_CLOSE": "Close",
+            "BTN_RELOAD": "Reload Project",
             "BTN_UPDATE_SAME": "Update Project",
             "BTN_UPDATE_DIFF": "Download different version",
             "STATUS_READY": "Ready.",
@@ -62,9 +85,11 @@ Item {
             "TOAST_URL_EMPTY": "URL is empty!",
             "TOAST_FILENAME_INVALID": "Filename is invalid!",
             "TOAST_WRITE_FAILED": "Write failed",
-            "INFO_ACTION": "⚠️ ACTION REQUIRED:\nTo apply changes, please return to the main menu and reload the project.",
+            "INFO_ACTION": "⚠️ DOWNLOAD SUCCESSFUL:\nClick 'Reload Project' to apply changes.",
             "ERR_FILENAME_DETECT": "Error: Could not determine filename.",
-            "ERR_NOT_FOUND": " (Not Found - Check branch name: main vs master?)"
+            "ERR_NOT_FOUND": " (404 Not Found)\nCheck URL, branch or token permissions.",
+            "ERR_AUTH": " (401 Unauthorized)\nCheck your Token.",
+            "ERR_API_CONVERT": "Could not convert URL to API format."
         }
     }
 
@@ -79,7 +104,7 @@ Item {
     }
 
     // =========================================================================
-    // 1. COMPOSANT PERSONNALISÉ : MARQUEE TEXT FIELD
+    // 2. COMPOSANT PERSONNALISÉ : MARQUEE TEXT FIELD
     // =========================================================================
     
     component MarqueeTextField : TextField {
@@ -132,7 +157,7 @@ Item {
     }
 
     // =========================================================================
-    // 2. LOGIQUE METIER
+    // 3. LOGIQUE METIER
     // =========================================================================
 
     function getCurrentProjectName() {
@@ -156,6 +181,7 @@ Item {
         }
     }
 
+    // --- MODE SANS TOKEN ---
     function getRawUrl(url) {
         var processed = url.trim();
         
@@ -179,6 +205,31 @@ Item {
         }
 
         return processed;
+    }
+
+    // --- MODE AVEC TOKEN (API) ---
+    function getApiUrl(url) {
+        var processed = url.trim();
+        if (processed.indexOf("http") !== 0) processed = "https://" + processed;
+        
+        var regex = /github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw|tree)\/([^\/]+)\/(.+)/;
+        var match = processed.match(regex);
+        
+        if (match) {
+            var user = match[1];
+            var repo = match[2];
+            var branch = match[3];
+            var path = match[4];
+            return "https://api.github.com/repos/" + user + "/" + repo + "/contents/" + path + "?ref=" + branch;
+        }
+        
+        var shortRegex = /github\.com\/([^\/]+)\/([^\/]+)\/(.+)/;
+        var shortMatch = processed.match(shortRegex);
+        if (shortMatch) {
+            return "https://api.github.com/repos/" + shortMatch[1] + "/" + shortMatch[2] + "/contents/" + shortMatch[3] + "?ref=main";
+        }
+        
+        return ""; 
     }
 
     function getCorrectedFileName() {
@@ -230,6 +281,10 @@ Item {
     }
 
     function startDownload() {
+        // Force la perte de focus pour valider l'input et cacher le clavier
+        dummyFocus.forceActiveFocus();
+        Qt.inputMethod.hide();
+
         calculatePath(); 
         var finalName = getCorrectedFileName();
         var rawInputUrl = urlInput.text.trim();
@@ -250,7 +305,19 @@ Item {
             urlWithFile += finalName;
         }
 
-        var finalUrl = getRawUrl(urlWithFile);
+        var finalUrl = "";
+        
+        // Choix de l'URL selon le mode
+        if (useTokenCheckbox.checked) {
+            finalUrl = getApiUrl(urlWithFile);
+            if (finalUrl === "") {
+                mainWindow.displayToast(tr("ERR_API_CONVERT"));
+                return;
+            }
+        } else {
+            finalUrl = getRawUrl(urlWithFile);
+        }
+
         console.log("QField Update Plugin: Final Download URL: " + finalUrl);
 
         pBar.visible = true
@@ -265,6 +332,15 @@ Item {
         xhr.open("GET", finalUrl)
         xhr.responseType = "arraybuffer"
 
+        // Gestion du Token
+        if (useTokenCheckbox.checked) {
+            var tkn = tokenInput.text.replace(/\s/g, ""); // Nettoyage du token
+            if (tkn !== "") {
+                xhr.setRequestHeader("Authorization", "Bearer " + tkn);
+                xhr.setRequestHeader("Accept", "application/vnd.github.v3.raw");
+            }
+        }
+
         xhr.onreadystatechange = function() {
             if (xhr.readyState === XMLHttpRequest.DONE) {
                 pBar.visible = false
@@ -275,6 +351,7 @@ Item {
                 } else {
                     var err = "HTTP Error: " + xhr.status
                     if (xhr.status === 404) err += tr("ERR_NOT_FOUND")
+                    else if (xhr.status === 401 || xhr.status === 403) err += tr("ERR_AUTH")
                     statusText.text = err
                     statusText.color = "red"
                     mainWindow.displayToast(err)
@@ -293,6 +370,7 @@ Item {
                 isSuccess = true 
                 statusText.text = tr("STATUS_SUCCESS")
                 statusText.color = "#80cc28"
+                // Mise à jour du texte d'info pour mentionner le rechargement
                 infoText.text = tr("INFO_ACTION")
                 infoText.visible = true
                 infoBox.visible = true
@@ -331,13 +409,17 @@ Item {
             allowDiffCheckbox.checked = false
             isNameMismatch = false
             
+            // Reset Token UI
+            useTokenCheckbox.checked = false
+            tokenInput.text = ""
+            
             downloadDialog.open()
             calculatePath(); 
         }
     }
 
     // =========================================================================
-    // 3. INTERFACE
+    // 4. INTERFACE
     // =========================================================================
 
     Dialog {
@@ -380,9 +462,8 @@ Item {
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 anchors.bottomMargin: 16
-                anchors.topMargin: 0 // Réduction de la marge supérieure
+                anchors.topMargin: 0 
                 
-                // ESPACEMENT GLOBAL RÉDUIT (Rapproche les textes des inputs)
                 spacing: 2 
 
                 Label {
@@ -391,7 +472,7 @@ Item {
                     font.pointSize: 16
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 0
-                    Layout.bottomMargin: 5 // Petit espace après le titre
+                    Layout.bottomMargin: 5 
                 }
 
                 // --- URL INPUT ---
@@ -399,7 +480,6 @@ Item {
                     text: tr("LBL_SOURCE"); 
                     color: "#666"; 
                     font.pixelSize: 12 
-                    // Pas de marge en haut, c'est le premier élément
                 }
                 
                 MarqueeTextField {
@@ -408,7 +488,47 @@ Item {
                     placeholderText: tr("PH_URL")
                     selectByMouse: true
                     Layout.fillWidth: true
+                    // Empêcher majuscule auto pour URL
+                    inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
                     onTextChanged: calculatePath()
+                }
+
+                // --- UI TOKEN CHECKBOX (Inséré ici) ---
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 5
+                    spacing: 8
+                    
+                    CheckBox {
+                        id: useTokenCheckbox
+                        checked: false
+                    }
+                    Text {
+                        text: tr("CB_TOKEN")
+                        color: "#333"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: useTokenCheckbox.checked = !useTokenCheckbox.checked
+                        }
+                    }
+                }
+
+                // --- UI TOKEN INPUT (Inséré ici) ---
+                MarqueeTextField {
+                    id: tokenInput
+                    visible: useTokenCheckbox.checked
+                    text: ""
+                    placeholderText: tr("PH_TOKEN")
+                    selectByMouse: true
+                    echoMode: TextInput.Password 
+                    Layout.fillWidth: true
+                    Layout.topMargin: 0
+                    
+                    // Sécurité et UX pour le token
+                    inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhSensitiveData | Qt.ImhNoAutoCorrect
                 }
 
                 // --- FILENAME INPUT ---
@@ -416,7 +536,6 @@ Item {
                     text: tr("LBL_TARGET"); 
                     color: "#666"; 
                     font.pixelSize: 12 
-                    // Ajout d'une marge pour séparer du champ précédent
                     Layout.topMargin: 10 
                 }
                 
@@ -434,7 +553,6 @@ Item {
                     visible: isNameMismatch
                     Layout.fillWidth: true
                     spacing: 5
-                    // Marge pour séparer du champ nom
                     Layout.topMargin: 8
                     
                     Text {
@@ -474,7 +592,6 @@ Item {
                     font.pixelSize: 12 
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    // Marge pour séparer du champ nom si pas de mismatch
                     Layout.topMargin: 5 
                 }
                 
@@ -483,7 +600,7 @@ Item {
                     text: tr("LBL_PATH"); 
                     color: "#666"; 
                     font.pixelSize: 12 
-                    Layout.topMargin: 10 // Espace avant cette section
+                    Layout.topMargin: 10 
                 }
                 Text { 
                     id: pathDisplay
@@ -539,7 +656,6 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    // Réduction de la marge au dessus du bouton (5 au lieu de 15)
                     Layout.topMargin: 5
                     spacing: 20
                     Layout.alignment: Qt.AlignHCenter
@@ -547,17 +663,16 @@ Item {
                     Button {
                         id: downloadBtn
                         
-                        // TEXTE DYNAMIQUE
-                        text: isSuccess ? tr("BTN_CLOSE") : (isNameMismatch ? tr("BTN_UPDATE_DIFF") : tr("BTN_UPDATE_SAME"))
+                        // TEXTE DYNAMIQUE : Si succès, on affiche "Recharger", sinon "Mettre à jour..."
+                        text: isSuccess ? tr("BTN_RELOAD") : (isNameMismatch ? tr("BTN_UPDATE_DIFF") : tr("BTN_UPDATE_SAME"))
                         
-                        // LARGEUR ADAPTÉE AU TEXTE (Min 220px)
                         Layout.preferredWidth: Math.max(220, contentItem.implicitWidth + 24)
                         
                         enabled: isSuccess ? true : (isNameMismatch ? allowDiffCheckbox.checked : true)
                         
                         background: Rectangle { 
-                            // COULEUR FIXE (Theme.mainColor), sauf si désactivé
-                            color: parent.enabled ? Theme.mainColor : "#ccc"
+                            // COULEUR : Vert si succès, Couleur Thème sinon
+                            color: isSuccess ? "#80cc28" : (parent.enabled ? Theme.mainColor : "#ccc")
                             radius: 4 
                         }
                         
@@ -571,7 +686,8 @@ Item {
                         
                         onClicked: {
                             if (isSuccess) {
-                                downloadDialog.close()
+                                // Appel de la fonction de rechargement
+                                triggerReload()
                             } else {
                                 startDownload()
                             }
