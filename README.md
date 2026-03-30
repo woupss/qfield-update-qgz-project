@@ -1,4 +1,7 @@
-With this plugin, you can update your .qgz project from an url or upload a new .qgz.
+IMPORTANT : THIS PLUGIN WILL NOT BE UPDATED IT IS REPLACED BY GITHUB-DOWNLOADER
+https://github.com/woupss/Github-Downloader
+
+With this plugin you can update your .qgz project from an url or upload a new .qgz.
 
 Usage example:
 your coworkers use all the same project on their phones, store in local,
